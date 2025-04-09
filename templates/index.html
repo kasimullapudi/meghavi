@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Auto Video Player</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: black;
+      height: 100%;
+      overflow: hidden;
+    }
+    video {
+      width: 100vw;
+      height: 100vh;
+      object-fit: contain;
+      background: black;
+    }
+  </style>
+</head>
+<body>
+
+<!-- Adding the muted attribute so that autoplay is allowed -->
+<video id="player" autoplay muted></video>
+
+<script>
+  // Attempt to automatically switch to fullscreen when the page loads.
+  // Note: Some browsers require a user gesture to enter fullscreen.
+  window.addEventListener('load', function() {
+    if (document.documentElement.requestFullscreen) {
+      document.documentElement.requestFullscreen().catch((err) => {
+        console.log("Auto fullscreen request failed:", err);
+      });
+    }
+    loadPlaylist();
+  });
+
+  const player = document.getElementById('player');
+  let playlist = [];
+  let current = 0;
+
+  async function loadPlaylist() {
+    try {
+      const res = await fetch('videos/list');
+      playlist = await res.json();
+      if (playlist.length === 0) throw new Error("No videos found.");
+      playNext();
+    } catch (err) {
+      console.error("Could not load playlist:", err);
+    }
+  }
+
+  function playNext() {
+    const filename = playlist[current];
+    player.src = `videos/${filename}`;
+    player.load();
+
+    // Ensure the player is muted so that autoplay is allowed.
+    player.muted = true;
+    player.play().catch(err => console.error("Playback error:", err));
+    current = (current + 1) % playlist.length;
+  }
+
+  // When a video ends, play the next video.
+  player.addEventListener('ended', playNext);
+</script>
+
+</body>
+</html>
