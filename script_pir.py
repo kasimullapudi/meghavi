@@ -35,7 +35,7 @@ print("date from txt: ",previous_date)
 
 
 # Configurations
-ZIP_URL = "http://127.0.0.1:5500/videos" 
+ZIP_URL = "https://meghavi-kiosk-api.onrender.com/api/videos/download-all" 
 DOWNLOAD_PATH = "videos.zip"
 EXTRACT_FOLDER = "extracted"
 VIDEOS_FOLDER = "videos"
@@ -104,9 +104,9 @@ if cur_date != previous_date:
     date_var=open('date_txt.txt','w')
     date_var.write(datetime.datetime.today().strftime('%d-%m-%Y'))
     date_var.close()
-    download_zip(ZIP_URL, DOWNLOAD_PATH)
-    extract_and_cleanup(DOWNLOAD_PATH, EXTRACT_FOLDER, VIDEOS_FOLDER)
-    select_random_video(VIDEOS_FOLDER, TARGET_FOLDER, TARGET_VIDEO_NAME)
+download_zip(ZIP_URL, DOWNLOAD_PATH)
+extract_and_cleanup(DOWNLOAD_PATH, EXTRACT_FOLDER, VIDEOS_FOLDER)
+select_random_video(VIDEOS_FOLDER, TARGET_FOLDER, TARGET_VIDEO_NAME)
 
 
 # Change 'COM4' to the correct port
@@ -118,18 +118,16 @@ subprocess.Popen([
                 "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe","--kiosk",
                 "http://localhost:5000"
             ])
-time.sleep(2)
+time.sleep(1)
 pyautogui.press('f11') 
 buffer = 0
 while True:
     data = arduino.readline().decode().strip()  # Read data from Arduino'''
-    if "Motion_Detected" in data:
+    if "Face_detected" in data:
         if buffer == 0:
-            
-            time.sleep(5)  # Wait for the browser to open
-            
-            print("Motion detected!")
+            print("Face detected!")
             killProcessByName()
+            exit(0)
             
             
     time.sleep(1)  # Check every second
