@@ -1,87 +1,36 @@
-import time
-import os
-import psutil
-import requests
-import zipfile
-import shutil
-import random
 import subprocess
-from tqdm import tqdm
 import datetime
 import pyautogui
-
+import time
 import cv2
 from ultralytics import YOLO
+from meghavi_functions import killProcessByName,download_zip,extract_and_cleanup,checkEachDay
 
-
-def killProcessByName():
-    for proc in psutil.process_iter(['pid', 'name']):
-        try:
-            name = proc.info['name']
-            pid = proc.info['pid']
-            if name == "msedge.exe":
-                print(f"process found with pid: {pid}!")
-                val = os.system(f"taskkill /pid {pid}")
-                print("process killed!") if val == 0 else print("")
-        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-            pass
 
 
 cur_date = datetime.datetime.today().strftime("%d-%m-%Y")
 print("cur date: ", cur_date)
-previous_date = open('date_txt.txt', 'r').readline()
+previous_date = open('date_txt.txt', 'r').readline().strip()
 print("date from txt: ", previous_date)
 
 # Configurations
-ZIP_URL = "https://meghavi-kiosk-api.onrender.com/api/videos/download-all" 
+ZIP_URL = "https://meghavi-kiosk-api.onrender.com/api/videos/download-all"
 DOWNLOAD_PATH = "videos.zip"
 EXTRACT_FOLDER = "extracted"
 VIDEOS_FOLDER = "videos"
+IDS_API_URL = "https://meghavi-kiosk-api.onrender.com/api/videos/get-all"
+IDS_FILE = "ids.txt"
 
-# Download the ZIP file
-def download_zip(url, save_path):
-    response = requests.get(url, stream=True)
-    total_size = int(response.headers.get("content-length", 0))
-    with open(save_path, "wb") as file, tqdm(
-            desc="Downloading", total=total_size, unit="B", unit_scale=True
-    ) as progress_bar:
-        for chunk in response.iter_content(chunk_size=1024):
-            file.write(chunk)
-            progress_bar.update(len(chunk))
-    print("Download complete.")
 
-# Extract ZIP and delete it
-def extract_and_cleanup(zip_path, extract_to, videos_folder):
-    with zipfile.ZipFile(zip_path, "r") as zip_ref:
-        zip_ref.extractall(extract_to)
-    os.remove(zip_path)
-
-    # Ensure videos folder exists
-    if not os.path.exists(videos_folder):
-        os.makedirs(videos_folder)
-
-    # Move video files to the videos folder
-    for root, _, files in os.walk(extract_to):
-        for file in files:
-            if file.endswith((".mp4", ".mkv", ".avi", ".mov")):
-                shutil.move(os.path.join(root, file), os.path.join(videos_folder, file))
-
-    # Delete extracted folder after moving files
-    shutil.rmtree(extract_to)
-    print("Videos extracted and organized.")
-
-if cur_date != previous_date:
-    date_var = open('date_txt.txt', 'w')
-    date_var.write(datetime.datetime.today().strftime('%d-%m-%Y'))
-    date_var.close()
-    
-download_zip(ZIP_URL, DOWNLOAD_PATH)
-extract_and_cleanup(DOWNLOAD_PATH, EXTRACT_FOLDER, VIDEOS_FOLDER)
-
+checkEachDay(cur_date,previous_date,IDS_FILE,IDS_API_URL,ZIP_URL,DOWNLOAD_PATH,EXTRACT_FOLDER,VIDEOS_FOLDER)
 
 # Initialization for face detection
 model_path = "models/model.pt"
 model = YOLO(model_path)
+
+# Calibration for area in cm^2
+cm_per_pixel = 0.05  # adjust based on your calibration
+min_area_cm2 = 20.0  # minimum face area to trigger detection
 
 # Open a connection to the webcam.
 cap = cv2.VideoCapture(0)
@@ -91,56 +40,59 @@ if not cap.isOpened():
 
 print("Starting live detection. Press 'q' to quit.")
 
-# Initialize timing variables.
 face_last_seen_time = time.time()
 alerted = False
 count = 0
-face_flag = False  # Indicates whether a face is detected in the current frame
-screensaver_running = False  # Tracks whether the screensaver subprocess is open
+face_flag = False
+screensaver_running = False
 
 while True:
-    # Read frame and run inference for face detection
     ret, frame = cap.read()
     if not ret:
         print("Error: Failed to grab frame.")
         break
 
-    # Run YOLO inference with a confidence threshold of 0.4 and suppress verbose output.
     results = model(frame, conf=0.4, verbose=False)
     current_time = time.time()
-
-    # Process detections from the first (and only) result.
     detections = results[0].boxes
     face_found = False
+    annotated_frame = frame.copy()
 
     if detections is not None:
         for box in detections:
             conf = float(box.conf[0])
             if conf >= 0.4:
-                face_found = True
-                break
+                x1, y1, x2, y2 = map(int, box.xyxy[0])
+                width_px = x2 - x1
+                height_px = y2 - y1
+                area_px = width_px * height_px
+                area_cm2 = area_px * (cm_per_pixel ** 2)
+                if area_cm2 > min_area_cm2:
+                    face_found = True
+                    cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                    cv2.putText(
+                        annotated_frame,
+                        f"Area: {area_cm2:.2f} cm^2",
+                        (x1, y1 - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.6,
+                        (0, 255, 0),
+                        2
+                    )
 
     if face_found:
         face_flag = True
         face_last_seen_time = current_time
-        count += 1
-        print(f"Face detected {count} times... Its time is {datetime.datetime.now().strftime('%d-%m-%Y -- %H-%M-%S')}")
-        alerted = False  # reset the alert flag if a face is detected
-
-        # If the screensaver is running and a face is detected, then kill it.
+        alerted = False
         if screensaver_running:
             print("Face detected while screensaver is open! Killing the process.")
             killProcessByName()
             screensaver_running = False
-
     else:
         face_flag = False
-        # Check if no face has been seen for at least 10 seconds.
         if (current_time - face_last_seen_time) >= 10 and not alerted:
             print("No face detected for 10 seconds!")
-            alerted = True  # Prevent further printing until a new face is found
-            
-            # If the screensaver is not already running, open it.
+            alerted = True
             if not screensaver_running:
                 print("Opening screensaver (Edge in kiosk mode).")
                 subprocess.Popen([
@@ -152,10 +104,7 @@ while True:
                 pyautogui.press('f11')
                 screensaver_running = True
 
-    # Annotate and show the frame.
-    annotated_frame = results[0].plot()
     cv2.imshow("Live Face Detection", annotated_frame)
-
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
 
