@@ -37,8 +37,6 @@ ZIP_URL = "https://meghavi-kiosk-api.onrender.com/api/videos/download-all"
 DOWNLOAD_PATH = "videos.zip"
 EXTRACT_FOLDER = "extracted"
 VIDEOS_FOLDER = "videos"
-TARGET_FOLDER = "selected_video"
-TARGET_VIDEO_NAME = "screensaver_vid.mp4"
 
 # Download the ZIP file
 def download_zip(url, save_path):
@@ -72,31 +70,6 @@ def extract_and_cleanup(zip_path, extract_to, videos_folder):
     shutil.rmtree(extract_to)
     print("Videos extracted and organized.")
 
-# Step 3: Select a random video and copy it to target folder
-def select_random_video(videos_folder, target_folder, target_video_name):
-    video_files = [f for f in os.listdir(videos_folder) if f.endswith((".mp4", ".mkv", ".avi", ".mov"))]
-
-    if not video_files:
-        print("No video files found.")
-        return
-
-    selected_video = random.choice(video_files)
-
-    if not os.path.exists(target_folder):
-        os.makedirs(target_folder)
-
-    target_path = os.path.join(target_folder, target_video_name)
-    if os.path.exists(target_path):
-        try:
-            os.remove(target_path)
-        except PermissionError:
-            print("Cannot delete old video, it's in use.")
-            return
-
-    shutil.copy(os.path.join(videos_folder, selected_video), target_path)
-    print(f"Selected video: {selected_video} copied as {target_video_name}")
-
-
 if cur_date != previous_date:
     date_var = open('date_txt.txt', 'w')
     date_var.write(datetime.datetime.today().strftime('%d-%m-%Y'))
@@ -104,7 +77,6 @@ if cur_date != previous_date:
     
 download_zip(ZIP_URL, DOWNLOAD_PATH)
 extract_and_cleanup(DOWNLOAD_PATH, EXTRACT_FOLDER, VIDEOS_FOLDER)
-select_random_video(VIDEOS_FOLDER, TARGET_FOLDER, TARGET_VIDEO_NAME)
 
 
 # Initialization for face detection
