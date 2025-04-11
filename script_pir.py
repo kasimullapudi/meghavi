@@ -96,12 +96,12 @@ while True:
             if not screensaver_running:
                 print("Opening screensaver (Edge in kiosk mode).")
                 subprocess.Popen([
-                    "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+                    "C:\\Program Files\\Mozilla Firefox\\firefox.exe",
                     "--kiosk",
                     "http://localhost:5000"
                 ])
-                time.sleep(1)
-                pyautogui.press('f11')
+                # time.sleep(1)
+                # pyautogui.press('f11')
                 screensaver_running = True
 
     cv2.imshow("Live Face Detection", annotated_frame)

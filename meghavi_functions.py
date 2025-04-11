@@ -12,16 +12,18 @@ import datetime
 def killProcessByName():
     for proc in psutil.process_iter(['pid', 'name']):
         try:
-            name = proc.info['name']
-            pid = proc.info['pid']
-            if name == "msedge.exe":
+            if proc.info['name'].lower() == "firefox.exe":
+                pid = proc.info['pid']
                 print(f"process found with pid: {pid}!")
-                val = os.system(f"taskkill /pid {pid}")
-                print("process killed!") if val == 0 else print("")
+                # Force‑kill the process tree rooted at this PID
+                subprocess.call([
+                    "taskkill", "/PID", str(pid),
+                    "/T",  # kill child processes
+                    "/F"   # force
+                ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                print("process killed!")
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
             pass
-
-
 # Download the ZIP file
 def download_zip(url, save_path):
     response = requests.get(url, stream=True)
