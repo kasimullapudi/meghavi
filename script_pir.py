@@ -1,16 +1,15 @@
 import subprocess
 import datetime
-import pyautogui
 import time
 import cv2
 from ultralytics import YOLO
-from meghavi_functions import killProcessByName,download_zip,extract_and_cleanup,checkEachDay
-
-
+from meghavi_functions import killProcessByName,checkEachDay
+import pyautogui
+from webview_scrnsaver import open_screensaver,close_screensaver
 
 cur_date = datetime.datetime.today().strftime("%d-%m-%Y")
 print("cur date: ", cur_date)
-previous_date = open('date_txt.txt', 'r').readline().strip()
+previous_date = open('textFiles/date_txt.txt', 'r').readline().strip()
 print("date from txt: ", previous_date)
 
 # Configurations
@@ -19,7 +18,7 @@ DOWNLOAD_PATH = "videos.zip"
 EXTRACT_FOLDER = "extracted"
 VIDEOS_FOLDER = "videos"
 IDS_API_URL = "https://meghavi-kiosk-api.onrender.com/api/videos/get-all"
-IDS_FILE = "ids.txt"
+IDS_FILE = "textFiles/ids.txt"
 
 
 checkEachDay(cur_date,previous_date,IDS_FILE,IDS_API_URL,ZIP_URL,DOWNLOAD_PATH,EXTRACT_FOLDER,VIDEOS_FOLDER)
@@ -86,7 +85,9 @@ while True:
         alerted = False
         if screensaver_running:
             print("Face detected while screensaver is open! Killing the process.")
-            killProcessByName()
+            # killProcessByName()
+            close_screensaver()
+
             screensaver_running = False
     else:
         face_flag = False
@@ -94,14 +95,8 @@ while True:
             print("No face detected for 10 seconds!")
             alerted = True
             if not screensaver_running:
-                print("Opening screensaver (Edge in kiosk mode).")
-                subprocess.Popen([
-                    "C:\\Program Files\\Mozilla Firefox\\firefox.exe",
-                    "--kiosk",
-                    "http://localhost:5000"
-                ])
-                # time.sleep(1)
-                # pyautogui.press('f11')
+                print("Opening screensaver in a window.")
+                open_screensaver()
                 screensaver_running = True
 
     cv2.imshow("Live Face Detection", annotated_frame)

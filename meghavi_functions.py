@@ -1,4 +1,3 @@
-import time
 import os
 import psutil
 import requests
@@ -6,13 +5,13 @@ import zipfile
 import shutil
 import subprocess
 from tqdm import tqdm
-import datetime
-
+import random
+import re
 
 def killProcessByName():
     for proc in psutil.process_iter(['pid', 'name']):
         try:
-            if proc.info['name'].lower() == "firefox.exe":
+            if proc.info['name'].lower() == "msedge.exe":
                 pid = proc.info['pid']
                 print(f"process found with pid: {pid}!")
                 # Force‑kill the process tree rooted at this PID
@@ -53,9 +52,38 @@ def extract_and_cleanup(zip_path, extract_to, videos_folder):
     shutil.rmtree(extract_to)
     print("Videos extracted and organized.")
 
+
+def shuffle_videos_folder(videos_folder):
+    # 1. Remove any existing numeric prefixes
+    for filename in os.listdir(videos_folder):
+        match = re.match(r'^\d+_(.+)', filename)
+        if match:
+            os.rename(
+                os.path.join(videos_folder, filename),
+                os.path.join(videos_folder, match.group(1))
+            )
+
+    # 2. Gather all video files
+    exts = ('.mp4', '.mkv', '.avi', '.mov')
+    videos = [
+        f for f in os.listdir(videos_folder)
+        if f.lower().endswith(exts)
+    ]
+
+    # 3. Shuffle the list
+    random.shuffle(videos)
+
+    # 4. Rename with new numeric prefixes so filesystem order is random
+    for idx, filename in enumerate(videos):
+        src = os.path.join(videos_folder, filename)
+        dst = os.path.join(videos_folder, f"{idx:03d}_{filename}")
+        os.rename(src, dst)
+
+
 def checkEachDay(cur_date,previous_date,IDS_FILE,IDS_API_URL,ZIP_URL,DOWNLOAD_PATH, EXTRACT_FOLDER, VIDEOS_FOLDER):
     if cur_date != previous_date:
-        with open('date_txt.txt', 'w') as date_var:
+        shuffle_videos_folder(VIDEOS_FOLDER)
+        with open('textFiles/date_txt.txt', 'w') as date_var:
             date_var.write(cur_date)
         
         # Fetch IDs and compare with previous

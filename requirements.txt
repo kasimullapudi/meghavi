@@ -1,0 +1,5 @@
+psutil
+requests
+tqdm
+opencv-python
+ultralytics
