@@ -1,39 +1,23 @@
 import os
-import psutil
 import requests
 import zipfile
 import shutil
-import subprocess
 from tqdm import tqdm
 import random
 import re
+from download_zip_popup import run_download_popup_window
 
-def killProcessByName():
-    for proc in psutil.process_iter(['pid', 'name']):
-        try:
-            if proc.info['name'].lower() == "msedge.exe":
-                pid = proc.info['pid']
-                print(f"process found with pid: {pid}!")
-                # Force‑kill the process tree rooted at this PID
-                subprocess.call([
-                    "taskkill", "/PID", str(pid),
-                    "/T",  # kill child processes
-                    "/F"   # force
-                ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                print("process killed!")
-        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-            pass
 # Download the ZIP file
-def download_zip(url, save_path):
-    response = requests.get(url, stream=True)
-    total_size = int(response.headers.get("content-length", 0))
-    with open(save_path, "wb") as file, tqdm(
-            desc="Downloading", total=total_size, unit="B", unit_scale=True
-    ) as progress_bar:
-        for chunk in response.iter_content(chunk_size=1024):
-            file.write(chunk)
-            progress_bar.update(len(chunk))
-    print("Download complete.")
+# def download_zip(url, save_path):
+#     response = requests.get(url, stream=True)
+#     total_size = int(response.headers.get("content-length", 0))
+#     with open(save_path, "wb") as file, tqdm(
+#             desc="Downloading", total=total_size, unit="B", unit_scale=True
+#     ) as progress_bar:
+#         for chunk in response.iter_content(chunk_size=1024):
+#             file.write(chunk)
+#             progress_bar.update(len(chunk))
+#     print("Download complete.")
 
 # Extract ZIP and delete it
 def extract_and_cleanup(zip_path, extract_to, videos_folder):
@@ -81,7 +65,10 @@ def shuffle_videos_folder(videos_folder):
 
 
 def checkEachDay(cur_date,previous_date,IDS_FILE,IDS_API_URL,ZIP_URL,DOWNLOAD_PATH, EXTRACT_FOLDER, VIDEOS_FOLDER):
+    if not os.path.exists(VIDEOS_FOLDER):
+        os.makedirs(VIDEOS_FOLDER)
     if cur_date != previous_date:
+        
         shuffle_videos_folder(VIDEOS_FOLDER)
         with open('textFiles/date_txt.txt', 'w') as date_var:
             date_var.write(cur_date)
@@ -108,7 +95,7 @@ def checkEachDay(cur_date,previous_date,IDS_FILE,IDS_API_URL,ZIP_URL,DOWNLOAD_PA
             print("Added IDs:", added)
             print("Removed IDs:", removed)
             #download videos if there is a change in server
-            download_zip(ZIP_URL, DOWNLOAD_PATH)
+            run_download_popup_window(ZIP_URL, DOWNLOAD_PATH)
             if os.path.exists(VIDEOS_FOLDER):
                 shutil.rmtree(VIDEOS_FOLDER)
                 print("old videos deleted!")

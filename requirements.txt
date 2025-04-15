@@ -3,3 +3,6 @@ requests
 tqdm
 opencv-python
 ultralytics
+pyautogui
+flask
+opencv

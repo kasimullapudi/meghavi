@@ -3,10 +3,10 @@ import datetime
 import time
 import cv2
 from ultralytics import YOLO
-from meghavi_functions import killProcessByName,checkEachDay
+from meghavi_functions import checkEachDay
 import pyautogui
 from webview_scrnsaver import open_screensaver,close_screensaver
-
+import math
 cur_date = datetime.datetime.today().strftime("%d-%m-%Y")
 print("cur date: ", cur_date)
 previous_date = open('textFiles/date_txt.txt', 'r').readline().strip()
@@ -29,10 +29,12 @@ model = YOLO(model_path)
 
 # Calibration for area in cm^2
 cm_per_pixel = 0.05  # adjust based on your calibration
-min_area_cm2 = 20.0  # minimum face area to trigger detection
+max_distance = 100  # minimum face area to trigger detection
 
 # Open a connection to the webcam.
 cap = cv2.VideoCapture(0)
+# cap.set(cv2.CAP_PROP_FRAME_WIDTH, 400)
+# cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 360)
 if not cap.isOpened():
     print("Error: Could not open webcam.")
     exit()
@@ -56,7 +58,8 @@ while True:
     detections = results[0].boxes
     face_found = False
     annotated_frame = frame.copy()
-
+    a = 9703.20
+    b = -0.4911842338691967
     if detections is not None:
         for box in detections:
             conf = float(box.conf[0])
@@ -66,16 +69,17 @@ while True:
                 height_px = y2 - y1
                 area_px = width_px * height_px
                 area_cm2 = area_px * (cm_per_pixel ** 2)
-                if area_cm2 > min_area_cm2:
+                distance=a*(area_px **b )
+                if distance < max_distance:
                     face_found = True
                     cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
                     cv2.putText(
                         annotated_frame,
-                        f"Area: {area_cm2:.2f} cm^2",
+                        f"Distance : {distance:.2f} cm",
                         (x1, y1 - 10),
                         cv2.FONT_HERSHEY_SIMPLEX,
                         0.6,
-                        (0, 255, 0),
+                        (0, 0, 255),
                         2
                     )
 
@@ -98,7 +102,7 @@ while True:
                 print("Opening screensaver in a window.")
                 open_screensaver()
                 screensaver_running = True
-
+    
     cv2.imshow("Live Face Detection", annotated_frame)
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
