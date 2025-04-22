@@ -6,6 +6,7 @@ if __name__ == '__main__':
         'Screensaver',
         'http://localhost:5000',
         frameless=True,
-        fullscreen=True
+        fullscreen=True,
+        on_top=True
     )
     webview.start()

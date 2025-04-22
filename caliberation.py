@@ -1,5 +1,4 @@
 # calibrate.py
-
 import cv2
 from ultralytics import YOLO
 import json
@@ -48,12 +47,16 @@ def calibrate(model_path="models/model.pt", output_file="calibration.json"):
     cap.release()
     cv2.destroyAllWindows()
 
-    # Compute K = A * d^2 for each sample, then average
     Ks = [areas[i] * distances[i]**2 for i in range(len(distances))]
     K = sum(Ks) / len(Ks)
 
+    data = {
+        "K": K,
+        "data": [{"area": a, "distance": d} for a, d in zip(areas, distances)]
+    }
+
     with open(output_file, "w") as f:
-        json.dump({"K": K}, f)
+        json.dump(data, f, indent=4)
 
     print(f"\nCalibration complete. K = {K:.2f} saved to {output_file}")
 
