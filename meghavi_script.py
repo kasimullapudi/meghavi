@@ -77,7 +77,7 @@ def main():
 
     # 4) Calibration parameters
     cm_per_pixel = 0.05
-    max_distance = 100
+    max_distance = 500
     a = 9703.20
     b = -0.4911842338691967
 
@@ -97,12 +97,15 @@ def main():
             time.sleep(0.01)
             continue
 
-        # Run YOLO inference
-        results = model(frame, conf=0.4, verbose=False)
+        # Rotate the frame 90 degrees clockwise
+        rotated = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+
+        # Run YOLO inference on the rotated frame
+        results = model(rotated, conf=0.4, verbose=False)
         detections = results[0].boxes
 
         face_found = False
-        annotated = frame.copy()
+        annotated = rotated.copy()
         now = time.time()
 
         if detections is not None:
@@ -142,15 +145,10 @@ def main():
                     print("No face for 10s — opening screensaver.")
                     open_screensaver()
                     screensaver_running = True
+        cv2.imshow("Live Face Detection", annotated)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
 
-        # cv2.imshow("Live Face Detection", annotated)
-        # if cv2.waitKey(1) & 0xFF == ord('q'):
-        #     break
-
-    # Cleanup
-    stream.stop()
-    cv2.destroyAllWindows()
-    print("Live detection stopped.")
 
 if __name__ == "__main__":
     main()
