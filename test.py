@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import os
 import cv2
 import math
@@ -5,15 +6,17 @@ import numpy as np
 import mediapipe as mp
 from ultralytics import YOLO
 import requests
+import time
+
 # --- Configuration ---
 MODEL_PATH        = "models/model.pt"
 OUTPUT_DIR        = "captured_faces"
-NUM_FRAMES        = 1        # capture only one frame
+STREAM_URL        = "http://192.168.31.116:5000/video"
 MAX_DISTANCE_CM   = 100.0    # only capture if under 1 meter
 
 # quality thresholds
 AREA_THRESHOLD       = 5000     # px²
-SHARPNESS_THRESHOLD  = 100.0    # laplacian var
+SHARPNESS_THRESHOLD  = 100.0    # Laplacian variance threshold
 YAW_THRESHOLD        = 10       # degrees
 PITCH_THRESHOLD      = 10       # degrees
 
@@ -21,16 +24,17 @@ PITCH_THRESHOLD      = 10       # degrees
 a = 9703.20
 b = -0.4911842338691967
 
-# head-pose model points
+# head-pose 3D model points
 MODEL_POINTS = np.array([
-    (0.0,   0.0,    0.0),      # nose tip
-    (0.0,  -330.0, -65.0),     # chin
-    (-165.0,170.0, -135.0),    # left eye corner
-    (165.0, 170.0, -135.0),    # right eye corner
-    (-150.0,-150.0,-125.0),    # left mouth corner
-    (150.0, -150.0,-125.0)     # right mouth corner
+    (0.0,   0.0,    0.0),
+    (0.0,  -330.0, -65.0),
+    (-165.0,170.0, -135.0),
+    (165.0, 170.0, -135.0),
+    (-150.0,-150.0,-125.0),
+    (150.0, -150.0,-125.0)
 ], dtype=np.float64)
 
+# landmark indices
 LANDMARK_IDS = {
     "nose_tip":    1,
     "chin":        199,
@@ -40,123 +44,131 @@ LANDMARK_IDS = {
     "right_mouth": 291
 }
 
-# initialize models
-model      = YOLO(MODEL_PATH)
-mp_face    = mp.solutions.face_mesh
-face_mesh  = mp_face.FaceMesh(static_image_mode=False)
+# Load models
+model     = YOLO(MODEL_PATH)
+mp_face   = mp.solutions.face_mesh
+face_mesh = mp_face.FaceMesh(static_image_mode=False)
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
+# Pose estimation helper
 def estimate_head_pose(landmarks, img_size):
-    image_points = np.array([
-        (landmarks[LANDMARK_IDS["nose_tip"]][0]  * img_size[1],
-         landmarks[LANDMARK_IDS["nose_tip"]][1]  * img_size[0]),
-        (landmarks[LANDMARK_IDS["chin"]][0]      * img_size[1],
-         landmarks[LANDMARK_IDS["chin"]][1]      * img_size[0]),
-        (landmarks[LANDMARK_IDS["left_eye"]][0]  * img_size[1],
-         landmarks[LANDMARK_IDS["left_eye"]][1]  * img_size[0]),
-        (landmarks[LANDMARK_IDS["right_eye"]][0] * img_size[1],
-         landmarks[LANDMARK_IDS["right_eye"]][1] * img_size[0]),
-        (landmarks[LANDMARK_IDS["left_mouth"]][0]* img_size[1],
-         landmarks[LANDMARK_IDS["left_mouth"]][1]* img_size[0]),
-        (landmarks[LANDMARK_IDS["right_mouth"]][0]*img_size[1],
-         landmarks[LANDMARK_IDS["right_mouth"]][1]*img_size[0])
+    h, w = img_size
+    img_pts = np.array([
+        (landmarks[LANDMARK_IDS['nose_tip']][0]*w,
+         landmarks[LANDMARK_IDS['nose_tip']][1]*h),
+        (landmarks[LANDMARK_IDS['chin']][0]*w,
+         landmarks[LANDMARK_IDS['chin']][1]*h),
+        (landmarks[LANDMARK_IDS['left_eye']][0]*w,
+         landmarks[LANDMARK_IDS['left_eye']][1]*h),
+        (landmarks[LANDMARK_IDS['right_eye']][0]*w,
+         landmarks[LANDMARK_IDS['right_eye']][1]*h),
+        (landmarks[LANDMARK_IDS['left_mouth']][0]*w,
+         landmarks[LANDMARK_IDS['left_mouth']][1]*h),
+        (landmarks[LANDMARK_IDS['right_mouth']][0]*w,
+         landmarks[LANDMARK_IDS['right_mouth']][1]*h)
     ], dtype=np.float64)
-
-    focal_length = img_size[1]
-    center       = (img_size[1]/2, img_size[0]/2)
-    cam_matrix   = np.array([[focal_length, 0, center[0]],
-                             [0, focal_length, center[1]],
-                             [0, 0, 1]], dtype=np.float64)
-    dist_coeffs = np.zeros((4,1))
-
-    success, rvec, _ = cv2.solvePnP(
-        MODEL_POINTS, image_points, cam_matrix, dist_coeffs,
-        flags=cv2.SOLVEPNP_ITERATIVE
-    )
-    if not success:
+    cam = np.array([[w, 0, w/2], [0, w, h/2], [0,0,1]], dtype=np.float64)
+    dist = np.zeros((4,1))
+    ok, rvec, _ = cv2.solvePnP(MODEL_POINTS, img_pts, cam, dist, flags=cv2.SOLVEPNP_ITERATIVE)
+    if not ok:
         return None, None
-
     R, _ = cv2.Rodrigues(rvec)
     sy = math.sqrt(R[0,0]**2 + R[1,0]**2)
     pitch = math.degrees(math.atan2(-R[2,0], sy))
     yaw   = math.degrees(math.atan2(R[1,0], R[0,0]))
     return yaw, pitch
 
-def variance_of_laplacian(img):
-    return cv2.Laplacian(img, cv2.CV_64F).var()
+# Sharpness helper
+def laplacian_var(gray):
+    return cv2.Laplacian(gray, cv2.CV_64F).var()
 
-cap = cv2.VideoCapture("http://192.168.31.116:5000/video")
-selected = []
+# Start video capture
+cv2.namedWindow("Video Preview")
+cap = cv2.VideoCapture(STREAM_URL)
+captured = False
+print("Starting preview. Press 'q' to quit.")
 
-print("Looking for a single clear, frontal face under 1 m...")
-
-while len(selected) < NUM_FRAMES:
+while True:
     ret, frame = cap.read()
     if not ret:
+        time.sleep(0.1)
+        continue
+    # Rotate frame 90° clockwise
+    frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+    cv2.imshow("Video Preview", frame)
+    key = cv2.waitKey(1) & 0xFF
+    if key == ord('q'):
         break
 
-    results     = model(frame, conf=0.4, verbose=False)
-    detections  = results[0].boxes
-    if detections is None:
+    if captured:
         continue
 
-    # Try to get landmarks
-    rgb         = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    mesh_result = face_mesh.process(rgb)
-    if not mesh_result.multi_face_landmarks:
-        print("Face detected but all landmarks not found.")
+    # Run detection
+    results = model(frame, conf=0.4, verbose=False)
+    boxes = results[0].boxes
+    if not boxes or len(boxes) == 0:
         continue
-    landmarks = [(lm.x, lm.y) for lm in mesh_result.multi_face_landmarks[0].landmark]
 
-    face_detected = False
-
-    for box in detections:
+    # For each detected box
+    for box in boxes:
         conf = float(box.conf[0])
         if conf < 0.4:
             continue
-
         x1, y1, x2, y2 = map(int, box.xyxy[0])
-        area_px       = (x2-x1)*(y2-y1)
-        if area_px < AREA_THRESHOLD:
+        area = (x2 - x1) * (y2 - y1)
+        if area < AREA_THRESHOLD:
             continue
 
-        face_detected = True
-        distance_cm   = a * (area_px ** b)
+        # Try landmarks only when a candidate box found
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        mesh = face_mesh.process(rgb)
+        if not mesh.multi_face_landmarks:
+            print("Box detected but landmarks missing.")
+            continue
+        lm = [(p.x, p.y) for p in mesh.multi_face_landmarks[0].landmark]
 
-        if distance_cm > MAX_DISTANCE_CM:
-            print(f"Face detected but not under distance. Distance: {distance_cm:.2f} cm")
+        # Distance check
+        dist = a * (area ** b)
+        if dist > MAX_DISTANCE_CM:
+            print(f"Face detected but too far: {dist:.1f}cm")
             continue
 
-        yaw, pitch = estimate_head_pose(landmarks, frame.shape[:2])
+        # Pose check
+        yaw, pitch = estimate_head_pose(lm, frame.shape[:2])
         if yaw is None or abs(yaw) > YAW_THRESHOLD or abs(pitch) > PITCH_THRESHOLD:
             continue
 
-        roi       = frame[y1:y2, x1:x2]
-        gray      = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-        sharpness = variance_of_laplacian(gray)
-        if sharpness < SHARPNESS_THRESHOLD:
+        # Sharpness check
+        roi_gray = cv2.cvtColor(frame[y1:y2, x1:x2], cv2.COLOR_BGR2GRAY)
+        if laplacian_var(roi_gray) < SHARPNESS_THRESHOLD:
             continue
-        # Passed all checks: capture this frame
-        print(f"Captured! distance={distance_cm:.1f} cm, area={area_px}, yaw={yaw:.1f}°")
-        selected.append(frame.copy())
-        break  # exit for-loop once captured
 
-# Save the one captured face
-if selected:
-    cv2.imwrite(os.path.join(OUTPUT_DIR, "face.jpg"), selected[0])
-    print(f"Saved to {OUTPUT_DIR}/face.jpg")
-    url = "https://meghavi-kiosk-api.onrender.com/api/faces/upload"
-    file_path = "captured_faces/face.jpg"
+        # Eye symmetry check
+        h, w = frame.shape[:2]
+        le_y = lm[LANDMARK_IDS['left_eye']][1] * h
+        re_y = lm[LANDMARK_IDS['right_eye']][1] * h
+        if abs(le_y - re_y) > 0.03 * h:
+            print("Face detected but not front-on (eye symmetry fail).")
+            continue
 
-    with open(file_path, "rb") as image_file:
-        files = {"image": image_file}
-        response = requests.post(url, files=files)
-    print(type(response.status_code))
-    if response.status_code == 201:
-        print("success",response.status_code)
-    else:
-        print("failed",response.status_code)
+        # Capture and upload
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        path = os.path.join(OUTPUT_DIR, 'face.jpg')
+        cv2.imwrite(path, frame)
+        print(f"Captured at {dist:.1f}cm, uploading...")
+        try:
+            with open(path, 'rb') as f:
+                res = requests.post(
+                    'https://meghavi-kiosk-api.onrender.com/api/faces/upload',
+                    files={'image': f}
+                )
+            print("Upload status:", res.status_code)
+        except Exception as e:
+            print("Upload failed:", e)
+        captured = True
+        break
 
+# Cleanup
 cap.release()
 cv2.destroyAllWindows()
