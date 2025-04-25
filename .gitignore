@@ -1,1 +1,7 @@
 videos/
+test/
+uv/
+node_modules/
+servers/
+package-lock.json
+package.json

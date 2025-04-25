@@ -77,7 +77,7 @@ def main():
 
     # 4) Calibration parameters
     cm_per_pixel = 0.05
-    max_distance = 500
+    max_distance = 100
     a = 9703.20
     b = -0.4911842338691967
 
@@ -99,6 +99,7 @@ def main():
 
         # Rotate the frame 90 degrees clockwise
         rotated = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+        # rotated = frame.copy()
 
         # Run YOLO inference on the rotated frame
         results = model(rotated, conf=0.4, verbose=False)
@@ -145,9 +146,9 @@ def main():
                     print("No face for 10s — opening screensaver.")
                     open_screensaver()
                     screensaver_running = True
-        cv2.imshow("Live Face Detection", annotated)
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
+        # cv2.imshow("Live Face Detection", annotated)
+        # if cv2.waitKey(1) & 0xFF == ord('q'):
+        #     break
 
 
 if __name__ == "__main__":

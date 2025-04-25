@@ -1,7 +1,7 @@
 from flask import Flask, render_template, jsonify, send_from_directory
 import os
 
-app = Flask(__name__)
+app = Flask(__name__,template_folder="templates")
 
 # Absolute path to the videos directory
 VIDEO_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'videos')
