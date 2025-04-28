@@ -7,12 +7,13 @@ import mediapipe as mp
 from ultralytics import YOLO
 import requests
 import time
+from threading import Thread, Lock, Event
 
 # --- Configuration ---
 MODEL_PATH        = "models/model.pt"
 OUTPUT_DIR        = "captured_faces"
 STREAM_URL        = "http://192.168.31.116:5000/video"
-MAX_DISTANCE_CM   = 100.0    # only capture if under 1 meter
+MAX_DISTANCE_CM   = 150.0    # only capture if under 1 meter
 
 # quality thresholds
 AREA_THRESHOLD       = 5000     # px²
@@ -20,11 +21,11 @@ SHARPNESS_THRESHOLD  = 100.0    # Laplacian variance threshold
 YAW_THRESHOLD        = 10       # degrees
 PITCH_THRESHOLD      = 10       # degrees
 
-# power-law coefficients from calibration
+# calibration coefficients
 a = 9703.20
 b = -0.4911842338691967
 
-# head-pose 3D model points
+# head-pose model points
 MODEL_POINTS = np.array([
     (0.0,   0.0,    0.0),
     (0.0,  -330.0, -65.0),
@@ -35,140 +36,143 @@ MODEL_POINTS = np.array([
 ], dtype=np.float64)
 
 # landmark indices
-LANDMARK_IDS = {
-    "nose_tip":    1,
-    "chin":        199,
-    "left_eye":    33,
-    "right_eye":   263,
-    "left_mouth":  61,
-    "right_mouth": 291
-}
+LANDMARK_IDS = {"nose_tip":1, "chin":199, "left_eye":33, "right_eye":263, "left_mouth":61, "right_mouth":291}
 
-# Load models
-model     = YOLO(MODEL_PATH)
-mp_face   = mp.solutions.face_mesh
-face_mesh = mp_face.FaceMesh(static_image_mode=False)
+# load detectors
+model = YOLO(MODEL_PATH)
+face_mesh = mp.solutions.face_mesh.FaceMesh(static_image_mode=False)
 
+# ensure output dir
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# Pose estimation helper
-def estimate_head_pose(landmarks, img_size):
+# shared frame buffer
+frame_buffer = None
+buffer_lock = Lock()
+stop_event = Event()
+
+# reader thread: continuously fetch and rotate frames
+def frame_reader():
+    global frame_buffer
+    cap = cv2.VideoCapture(STREAM_URL)
+    while not stop_event.is_set():
+        ret, frame = cap.read()
+        if not ret:
+            time.sleep(0.05)
+            continue
+        frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+        with buffer_lock:
+            frame_buffer = frame
+    cap.release()
+
+# start reader thread
+t = Thread(target=frame_reader, daemon=True)
+t.start()
+
+# helper: pose estimation
+def estimate_head_pose(lm, img_size):
     h, w = img_size
-    img_pts = np.array([
-        (landmarks[LANDMARK_IDS['nose_tip']][0]*w,
-         landmarks[LANDMARK_IDS['nose_tip']][1]*h),
-        (landmarks[LANDMARK_IDS['chin']][0]*w,
-         landmarks[LANDMARK_IDS['chin']][1]*h),
-        (landmarks[LANDMARK_IDS['left_eye']][0]*w,
-         landmarks[LANDMARK_IDS['left_eye']][1]*h),
-        (landmarks[LANDMARK_IDS['right_eye']][0]*w,
-         landmarks[LANDMARK_IDS['right_eye']][1]*h),
-        (landmarks[LANDMARK_IDS['left_mouth']][0]*w,
-         landmarks[LANDMARK_IDS['left_mouth']][1]*h),
-        (landmarks[LANDMARK_IDS['right_mouth']][0]*w,
-         landmarks[LANDMARK_IDS['right_mouth']][1]*h)
-    ], dtype=np.float64)
-    cam = np.array([[w, 0, w/2], [0, w, h/2], [0,0,1]], dtype=np.float64)
+    pts = np.array([(lm[i][0]*w, lm[i][1]*h) for i in [LANDMARK_IDS['nose_tip'], LANDMARK_IDS['chin'], LANDMARK_IDS['left_eye'], LANDMARK_IDS['right_eye'], LANDMARK_IDS['left_mouth'], LANDMARK_IDS['right_mouth']]], dtype=np.float64)
+    cam = np.array([[w,0,w/2],[0,w,h/2],[0,0,1]], dtype=np.float64)
     dist = np.zeros((4,1))
-    ok, rvec, _ = cv2.solvePnP(MODEL_POINTS, img_pts, cam, dist, flags=cv2.SOLVEPNP_ITERATIVE)
-    if not ok:
-        return None, None
-    R, _ = cv2.Rodrigues(rvec)
+    ok, rvec, _ = cv2.solvePnP(MODEL_POINTS, pts, cam, dist, flags=cv2.SOLVEPNP_ITERATIVE)
+    if not ok: return None, None
+    R,_ = cv2.Rodrigues(rvec)
     sy = math.sqrt(R[0,0]**2 + R[1,0]**2)
     pitch = math.degrees(math.atan2(-R[2,0], sy))
     yaw   = math.degrees(math.atan2(R[1,0], R[0,0]))
     return yaw, pitch
 
-# Sharpness helper
+# helper: sharpness
 def laplacian_var(gray):
     return cv2.Laplacian(gray, cv2.CV_64F).var()
 
-# Start video capture
+# asynchronous upload helper
+def async_upload(path):
+    try:
+        res = requests.post(
+            'https://meghavi-kiosk-api.onrender.com/api/faces/upload',
+            files={'image': open(path, 'rb')}
+        )
+        if res.status_code == 201:
+            print("Upload successful.")
+        else:
+            print(f"Upload failed with status: {res.status_code}")
+    except Exception as e:
+        print(f"Upload exception: {e}")
+
+# main loop
 cv2.namedWindow("Video Preview")
-cap = cv2.VideoCapture(STREAM_URL)
 captured = False
 print("Starting preview. Press 'q' to quit.")
 
 while True:
-    ret, frame = cap.read()
-    if not ret:
-        time.sleep(0.1)
+    with buffer_lock:
+        frame = frame_buffer.copy() if frame_buffer is not None else None
+    if frame is None:
+        time.sleep(0.01)
         continue
-    # Rotate frame 90° clockwise
-    frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+
     cv2.imshow("Video Preview", frame)
     key = cv2.waitKey(1) & 0xFF
     if key == ord('q'):
         break
-
     if captured:
         continue
 
-    # Run detection
-    results = model(frame, conf=0.4, verbose=False)
-    boxes = results[0].boxes
-    if not boxes or len(boxes) == 0:
+    res = model(frame, conf=0.4, verbose=False)
+    boxes = res[0].boxes
+    if not boxes:
         continue
 
-    # For each detected box
     for box in boxes:
         conf = float(box.conf[0])
         if conf < 0.4:
+            print("Box detected but confidence too low.")
             continue
-        x1, y1, x2, y2 = map(int, box.xyxy[0])
-        area = (x2 - x1) * (y2 - y1)
+        x1,y1,x2,y2 = map(int, box.xyxy[0])
+        area = (x2-x1)*(y2-y1)
         if area < AREA_THRESHOLD:
+            print(f"Face detected but too small: area={area}")
             continue
 
-        # Try landmarks only when a candidate box found
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         mesh = face_mesh.process(rgb)
         if not mesh.multi_face_landmarks:
             print("Box detected but landmarks missing.")
             continue
-        lm = [(p.x, p.y) for p in mesh.multi_face_landmarks[0].landmark]
+        lm = [(p.x,p.y) for p in mesh.multi_face_landmarks[0].landmark]
 
-        # Distance check
         dist = a * (area ** b)
         if dist > MAX_DISTANCE_CM:
             print(f"Face detected but too far: {dist:.1f}cm")
             continue
 
-        # Pose check
-        yaw, pitch = estimate_head_pose(lm, frame.shape[:2])
-        if yaw is None or abs(yaw) > YAW_THRESHOLD or abs(pitch) > PITCH_THRESHOLD:
+        yaw,pitch = estimate_head_pose(lm, frame.shape[:2])
+        if yaw is None or abs(yaw)>YAW_THRESHOLD or abs(pitch)>PITCH_THRESHOLD:
+            print(f"Pose check fail: yaw={yaw}, pitch={pitch}")
             continue
 
-        # Sharpness check
         roi_gray = cv2.cvtColor(frame[y1:y2, x1:x2], cv2.COLOR_BGR2GRAY)
-        if laplacian_var(roi_gray) < SHARPNESS_THRESHOLD:
+        var = laplacian_var(roi_gray)
+        if var < SHARPNESS_THRESHOLD:
+            print(f"Face detected but not sharp enough: var={var:.1f}")
             continue
 
-        # Eye symmetry check
-        h, w = frame.shape[:2]
-        le_y = lm[LANDMARK_IDS['left_eye']][1] * h
-        re_y = lm[LANDMARK_IDS['right_eye']][1] * h
-        if abs(le_y - re_y) > 0.03 * h:
+        h, _ = frame.shape[:2]
+        le_y = lm[LANDMARK_IDS['left_eye']][1]*h
+        re_y = lm[LANDMARK_IDS['right_eye']][1]*h
+        if abs(le_y - re_y) > 0.03*h:
             print("Face detected but not front-on (eye symmetry fail).")
             continue
 
-        # Capture and upload
-        os.makedirs(OUTPUT_DIR, exist_ok=True)
         path = os.path.join(OUTPUT_DIR, 'face.jpg')
         cv2.imwrite(path, frame)
         print(f"Captured at {dist:.1f}cm, uploading...")
-        try:
-            with open(path, 'rb') as f:
-                res = requests.post(
-                    'https://meghavi-kiosk-api.onrender.com/api/faces/upload',
-                    files={'image': f}
-                )
-            print("Upload status:", res.status_code)
-        except Exception as e:
-            print("Upload failed:", e)
+        Thread(target=async_upload, args=(path,), daemon=True).start()
         captured = True
         break
 
-# Cleanup
-cap.release()
+# cleanup
+stop_event.set()
+t.join()
 cv2.destroyAllWindows()
