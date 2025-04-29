@@ -91,7 +91,8 @@ def async_upload(path):
     try:
         res = requests.post(
             'https://meghavi-kiosk-api.onrender.com/api/faces/upload',
-            files={'image': open(path, 'rb')}
+            files={'image': open(path, 'rb')},
+            data={'deviceId': 'DEV3617'}
         )
         if res.status_code == 201:
             print("Upload successful.")

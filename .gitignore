@@ -5,3 +5,7 @@ node_modules/
 servers/
 package-lock.json
 package.json
+test.py
+temp.py
+captured_faces
+cascades/
